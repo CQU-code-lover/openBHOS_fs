@@ -4,6 +4,7 @@
 
 #include "fs_common.h"
 #include "block.h"
+#include "string.h"
 
 static block_cache_t block_cache;
 
@@ -19,8 +20,8 @@ static inline void _block_init(block_t * block , int dev_no){
  * @note LRU.
  * @param block
  */
-static inline void _block_move_to_head(block_t * block){
-    dlink_add_head(&block_cache.dlink,dnode_remove_self(&block->dnode));
+static inline void _block_move_to_head(dlink_t *dlink,block_t * block){
+    dlink_add_head(&block_cache.dlink, dlink_remove_dnode_unsafe(dlink,&block->dnode));
 }
 
 /*!
@@ -36,53 +37,46 @@ static inline void _block_flush_no_check(block_t * block){
 }
 
 
-static inline block_t * _block_get(uint32_t block_no , int dev_no , bool is_write){
+static inline block_t * _block_get(uint32_t block_no , int dev_no , bool write){
     // search in cache
-    fs_stub_rw_r_lock_acquire(&block_cache.rw_lock);
+    fs_stub_rw_w_lock_acquire(&block_cache.rw_lock);
     dnode_t * probe = block_cache.dlink.head;
     for(;probe!=NULL;probe=probe->next){
         block_t * block_probe = (block_t *)probe->data;
-
-        if(is_write){
-            fs_stub_rw_w_lock_acquire(&block_probe->rw_lock);
-        }
-        else{
-            fs_stub_rw_r_lock_acquire(&block_probe->rw_lock);
-        }
-
+        fs_stub_rw_w_lock_acquire(&block_probe->rw_lock);
         if(block_probe->block_no == block_no&&block_probe->dev_no == dev_no){
             // cache hit!
-            fs_stub_rw_r_lock_release(&block_cache.rw_lock);
+            // move to head
+            if(block_cache.dlink.head!=&block_probe->dnode){
+                _block_move_to_head(&block_cache.dlink,block_probe);
+            }
+            if(!write){
+                // block cache must lock when change w_lock to r_lock.
+                // otherwise,the target block will recycle probably.
+                fs_stub_rw_w_lock_release(&block_probe->rw_lock);
+                fs_stub_rw_r_lock_acquire(&block_probe->rw_lock);
+            }
+            fs_stub_rw_w_lock_release(&block_cache.rw_lock);
             return block_probe;
-        }
-
-        if(is_write){
-            fs_stub_rw_w_lock_release(&block_probe->rw_lock);
-        }
-        else{
-            fs_stub_rw_r_lock_release(&block_probe->rw_lock);
         }
     }
     // no hit
     // load in device
-    //LRU
-    fs_stub_rw_r_lock_release(&block_cache.rw_lock);
-
-    fs_stub_rw_w_lock_acquire(&block_cache.rw_lock);
+    // LRU
     block_t * block_tail= block_cache.dlink.tail->data;
+    fs_stub_rw_w_lock_acquire(&block_tail->rw_lock);
     if(block_tail->block_no!=BLOCK_NO_ERROR){
         // write back this
-        fs_stub_rw_r_lock_acquire(&block_tail->rw_lock);
         block_flush(block_tail);
-        fs_stub_rw_r_lock_release(&block_tail->rw_lock);
     }
-    fs_stub_rw_w_lock_acquire(&block_tail->rw_lock);
-    _block_move_to_head(block_tail);
+    if(&block_tail->dnode!=block_cache.dlink.head){
+        _block_move_to_head(&block_cache.dlink,block_tail);
+    }
     block_tail->dev_no = dev_no;
     block_tail->block_no = block_no;
     block_tail->dirty = false;
     fs_stub_source_read(block_tail);
-    if(!is_write){
+    if(!write){
         fs_stub_rw_w_lock_release(&block_tail->rw_lock);
         fs_stub_rw_r_lock_acquire(&block_tail->rw_lock);
     }
@@ -122,6 +116,8 @@ void block_flush_all(){
 void block_module_init(int dev_no){
     fs_stub_source_init();
     block_cache.dirty = false;
+    // clear cache
+    bzero(&block_cache, sizeof(block_cache_t));
     fs_stub_rw_lock_init(&block_cache.rw_lock);
     for(int i =0;i<CONFIG_FS_BLOCK_CACHE_CNT;i++){
         _block_init(&block_cache.buffer[i], dev_no);
@@ -152,4 +148,3 @@ void block_put_write_with_flush(block_t * block){
     _block_flush_no_check(block);
     fs_stub_rw_w_lock_release(&block->rw_lock);
 }
-

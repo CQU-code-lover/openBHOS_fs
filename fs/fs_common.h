@@ -9,8 +9,9 @@
 
 #define CONFIG_FS_BLOCK_SIZE 512
 #define CONFIG_FS_BLOCK_CACHE_CNT 1024
-#define CONFIG_FS_ENTRY_CACHE_CNT 128
-
+#define CONFIG_FS_ENTRY_CACHE_CNT 64
+#define CONFIG_FS_FAT32_MAX_FILENAME_LEN 15
+#define CONFIG_FS_FAT32_DEV_NO 0
 #define NULL (void *)0
 
 typedef int bool;
@@ -32,7 +33,13 @@ static void assert(bool in , char * text){
     }
 }
 
+static void panic(char * text){
+    printf(text);
+    while(1);
+}
+
 #define ASSERT assert
+#define PANIC panic
 #define BLOCK_NO_ERROR 0xFFFFFFFF
 #define true 1
 #define false 0
@@ -68,36 +75,6 @@ struct{
     bool dirty;
     rw_lock_t rw_lock;
 } block_cache_t;
-
-
-typedef
-struct {
-    uint32_t first_data_sec;
-    uint32_t data_sec_cnt;
-    uint32_t data_clus_cnt;
-    uint32_t byts_per_clus;
-
-    struct {
-        uint16_t byts_per_sec;      // offset:0x0B~0x0C
-        uint8_t  sec_per_clus;      //        0x0D~0x0D
-        uint16_t rsvd_sec_cnt;      //        0x0E~0x0F
-        uint8_t  fat_cnt;           //        0x10~0x10
-        uint32_t hidd_sec;          //        0x1C~0x1F     count of hidden sectors to EBR
-        uint32_t tot_sec;           //total count of sectors including all regions
-                                    //        0x13~0x14 when size of partition less than 32MB
-                                    //        0x20~0x23 when size of partition bigger than 32MB
-        uint32_t fat_sz;            //count of sectors for a FAT region
-                                    //        0x16~0x17 when size of fat32 less than 32MB
-                                    //        0x24~0x27 when size of fat32 bigger than 32MB
-        uint32_t root_clus;         //        0x2C~0x2F root dir first clus,
-                                    // it will be 0x2 under normal conditions.
-    } bpb;
-} fs_t;
-
-typedef
-struct {
-
-}entry_t;
 
 static inline void fs_stub_rw_lock_init(void * lock){
 
@@ -144,7 +121,7 @@ void dlink_add_head(dlink_t * dlink, dnode_t * dnode);
 
 dnode_t * dlink_find_dnode_by_data(dlink_t * dlink, node_data_t data);
 
-dnode_t * dnode_remove_self(dnode_t * dnode);
+dnode_t * dlink_remove_dnode_unsafe(dlink_t *dlink,dnode_t * dnode);
 
 dnode_t * dlink_remove_by_data(dlink_t * dlink, node_data_t data);
 

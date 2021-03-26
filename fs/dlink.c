@@ -66,19 +66,26 @@ dnode_t * dlink_find_dnode_by_data(dlink_t * dlink, node_data_t data){
     return ret;
 }
 
-
 /*!
+ * @note don`t need to search dnode in dlink.
  * @param dnode   can`t be NULL otherwise will raise assert.
  * @return
  */
-dnode_t * dnode_remove_self(dnode_t * dnode){
-    ASSERT(dnode!=NULL,"panic!\n");
+dnode_t * dlink_remove_dnode_unsafe(dlink_t * dlink,dnode_t * dnode){
+    ASSERT(dnode!=NULL&&dlink->size!=0,"dlink remove fault!\n");
     if(dnode->prev != NULL){
         dnode->prev->next = dnode->next;
+    }
+    else{
+        dlink->head = dnode->next;
     }
     if(dnode->next != NULL){
         dnode->next->prev = dnode->prev;
     }
+    else{
+        dlink->tail = dnode->prev;
+    }
+    dlink->size--;
     return dnode;
 }
 
@@ -91,7 +98,7 @@ dnode_t * dlink_remove_by_data(dlink_t * dlink, node_data_t data){
         for(dnode_t * probe = dlink->head;probe!=NULL;probe=probe->next){
             if(probe->data == data){
                 // get target dnode
-                dnode_remove_self(probe);
+                dlink_remove_dnode_unsafe(dlink,probe);
             }
         }
     }
